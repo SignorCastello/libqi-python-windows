@@ -2,8 +2,8 @@ name: Build and Release Windows Wheels
 
 on:
   schedule:
-    - cron: '0 0 */14 * *' # Ogni 14 giorni
-  workflow_dispatch:      # Avvio manuale
+    - cron: '0 0 */14 * *' # Esegue ogni 14 giorni
+  workflow_dispatch:      # Permette l'avvio manuale
 
 jobs:
   sync:
@@ -29,6 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Ultime tre versioni di Python
         python-version: ['3.10', '3.11', '3.12']
 
     steps:
@@ -50,43 +51,35 @@ jobs:
         shell: bash
         run: |
           git clone --depth=1 https://github.com/aldebaran/libqi.git ../libqi
-          
-          # Script Python potenziato per neutralizzare la validazione
-          python -c "
-          import os, re
-          path = '../libqi/conanfile.py'
-          if os.path.exists(path):
-              with open(path, 'r') as f:
-                  content = f.read()
-              # 1. Forza gnu17 a diventare 17 ovunque
-              content = content.replace('gnu17', '17')
-              # 2. Cerca la funzione validate(self) e svuotala
-              # Questo elimina l'errore 'The cppstd GNU extension is required' alla radice
-              content = re.sub(r'def validate\(self\):.*?def', 'def validate(self):\n        pass\n\n    def', content, flags=re.DOTALL)
-              with open(path, 'w') as f:
-                  f.write(content)
-              print('Patch applicata con successo')
-          "
+          # Patch aggressiva per rimuovere il controllo gnu17 che blocca MSVC
+          python -c "import os, re; path='../libqi/conanfile.py'; content=open(path).read(); content=content.replace('gnu17', '17'); content=re.sub(r'def validate\(self\):.*?def', 'def validate(self):\n        pass\n\n    def', content, flags=re.DOTALL); open(path,'w').write(content)"
           conan export ../libqi --version 4.0.5
 
       - name: Install Dependencies with Conan
         shell: pwsh
         run: |
-          # Usiamo standard 17 (MSVC) e disattiviamo i check di compatibilità rigidi
+          # Forziamo lo standard 17 e la build STATICA (-o *:shared=False)
+          # Questo risolve gli errori C4273 di 'inconsistent dll linkage'
           conan install . --build=missing `
             -s build_type=Release `
             -s compiler.cppstd=17 `
+            -o *:shared=False `
             -c tools.build:skip_test=true
 
       - name: Build Wheel
         shell: bash
         run: |
           CONF_FILE=$(find build -name "conan_toolchain.cmake")
-          python -m build --wheel --config-setting=cmake.define.CMAKE_TOOLCHAIN_FILE="$CONF_FILE"
+          # Passiamo i flag a CMake per forzare la modalità statica e disabilitare i test
+          python -m build --wheel `
+            --config-setting=cmake.define.CMAKE_TOOLCHAIN_FILE="$CONF_FILE" `
+            --config-setting=cmake.define.QI_WITH_TESTS=OFF `
+            --config-setting=cmake.define.QI_STATIC_BUILD=ON
 
       - name: Repair Wheel (Bundle DLLs)
+        shell: pwsh
         run: |
-          # Delvewheel include le DLL di libqi e boost nel .whl
+          # Delvewheel cercherà eventuali dipendenze rimaste (es. OpenSSL) e le includerà
           if (Test-Path dist/*.whl) {
             delvewheel repair dist/*.whl -w wheelhouse/
           }
@@ -112,9 +105,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: libqi-python Windows (Py 3.10-3.12)
+          name: Release libqi-python Windows (Py 3.10-3.12)
           body: |
-            Built automatically.
+            Built automatically with GitHub Actions.
           files: all-wheels/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
