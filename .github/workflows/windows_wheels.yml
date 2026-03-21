@@ -50,16 +50,25 @@ jobs:
         shell: bash
         run: |
           git clone --depth=1 https://github.com/aldebaran/libqi.git ../libqi
-          # FIX CRUCIALE: Rimuoviamo il controllo forzato su 'gnu17' che blocca MSVC
-          # Cerchiamo la riga che valida lo standard e la rendiamo compatibile con MSVC (standard 17)
-          sed -i 's/gnu17/17/g' ../libqi/conanfile.py
+          
+          # Usiamo Python per rimuovere fisicamente la validazione che rompe le scatole
+          python -c "
+          import os
+          path = '../libqi/conanfile.py'
+          with open(path, 'r') as f:
+              content = f.read()
+          # Rimuoviamo il requisito GNU e forziamo lo standard 17 semplice
+          content = content.replace('validate_cppstd(self, \"gnu17\")', 'pass')
+          content = content.replace('\"gnu17\"', '\"17\"')
+          with open(path, 'w') as f:
+              f.write(content)
+          "
           conan export ../libqi --version 4.0.5
 
       - name: Install Dependencies with Conan
         shell: pwsh
         run: |
-          # In Conan 2 su Windows, usiamo PowerShell (pwsh) 
-          # Forziamo compiler.cppstd=17 che è il corrispettivo MSVC di gnu17
+          # Ora installiamo usando lo standard 17 che MSVC accetta
           conan install . --build=missing `
             -s build_type=Release `
             -s compiler.cppstd=17 `
