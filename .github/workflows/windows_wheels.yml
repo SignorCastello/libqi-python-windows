@@ -2,33 +2,26 @@ name: Build and Release Windows Wheels
 
 on:
   schedule:
-    - cron: '0 0 */14 * *' # Ogni 14 giorni a mezzanotte
-  workflow_dispatch:      # Permette sempre l'avvio manuale
+    - cron: '0 0 */14 * *' # Ogni 14 giorni
+  workflow_dispatch:      # Avvio manuale
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    outputs:
-      new_commits: ${{ steps.sync.outputs.has_new_commits }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Sync Upstream
-        id: sync
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git remote add upstream https://github.com/aldebaran/libqi-python.git
           git fetch upstream
           git checkout master
-          if git merge upstream/master --ff-only; then
-            echo "has_new_commits=true" >> $GITHUB_OUTPUT
-            git push origin master
-          else
-            echo "has_new_commits=false" >> $GITHUB_OUTPUT
-          fi
+          git merge upstream/master --ff-only || echo "Già aggiornato"
+          git push origin master
 
   build:
     needs: sync
@@ -51,32 +44,37 @@ jobs:
       - name: Install Tools
         run: |
           pip install conan wheel build delvewheel
-          # Crea il profilo di default se non esiste
           conan profile detect --force
 
       - name: Prepare libqi core (Dependency)
         shell: bash
         run: |
           git clone --depth=1 https://github.com/aldebaran/libqi.git ../libqi
+          # FIX CRUCIALE: Rimuoviamo il controllo forzato su 'gnu17' che blocca MSVC
+          # Cerchiamo la riga che valida lo standard e la rendiamo compatibile con MSVC (standard 17)
+          sed -i 's/gnu17/17/g' ../libqi/conanfile.py
           conan export ../libqi --version 4.0.5
 
       - name: Install Dependencies with Conan
+        shell: pwsh
         run: |
+          # In Conan 2 su Windows, usiamo PowerShell (pwsh) 
+          # Forziamo compiler.cppstd=17 che è il corrispettivo MSVC di gnu17
           conan install . --build=missing `
             -s build_type=Release `
             -s compiler.cppstd=17 `
-            -c tools.build:skip_test=true `
-            -c core:non_interactive=True
-            
+            -c tools.build:skip_test=true
+
       - name: Build Wheel
         shell: bash
         run: |
+          # Troviamo il file toolchain generato da Conan per CMake
           CONF_FILE=$(find build -name "conan_toolchain.cmake")
           python -m build --wheel --config-setting=cmake.define.CMAKE_TOOLCHAIN_FILE="$CONF_FILE"
 
       - name: Repair Wheel (Bundle DLLs)
         run: |
-          # Includiamo le DLL di libqi e boost nel pacchetto finale
+          # delvewheel aggiunge le DLL (.so di windows) dentro il pacchetto .whl
           delvewheel repair dist/*.whl -w wheelhouse/
 
       - name: Upload Artifact
@@ -102,7 +100,7 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: Release libqi-python Windows
           body: |
-            Built for Windows, updated every 14 days!
+            Built for Windows using GitHub Actions.
           files: all-wheels/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
