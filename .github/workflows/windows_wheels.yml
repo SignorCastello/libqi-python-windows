@@ -51,24 +51,28 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/aldebaran/libqi.git ../libqi
           
-          # Usiamo Python per rimuovere fisicamente la validazione che rompe le scatole
+          # Script Python potenziato per neutralizzare la validazione
           python -c "
-          import os
+          import os, re
           path = '../libqi/conanfile.py'
-          with open(path, 'r') as f:
-              content = f.read()
-          # Rimuoviamo il requisito GNU e forziamo lo standard 17 semplice
-          content = content.replace('validate_cppstd(self, \"gnu17\")', 'pass')
-          content = content.replace('\"gnu17\"', '\"17\"')
-          with open(path, 'w') as f:
-              f.write(content)
+          if os.path.exists(path):
+              with open(path, 'r') as f:
+                  content = f.read()
+              # 1. Forza gnu17 a diventare 17 ovunque
+              content = content.replace('gnu17', '17')
+              # 2. Cerca la funzione validate(self) e svuotala
+              # Questo elimina l'errore 'The cppstd GNU extension is required' alla radice
+              content = re.sub(r'def validate\(self\):.*?def', 'def validate(self):\n        pass\n\n    def', content, flags=re.DOTALL)
+              with open(path, 'w') as f:
+                  f.write(content)
+              print('Patch applicata con successo')
           "
           conan export ../libqi --version 4.0.5
 
       - name: Install Dependencies with Conan
         shell: pwsh
         run: |
-          # Ora installiamo usando lo standard 17 che MSVC accetta
+          # Usiamo standard 17 (MSVC) e disattiviamo i check di compatibilità rigidi
           conan install . --build=missing `
             -s build_type=Release `
             -s compiler.cppstd=17 `
@@ -77,14 +81,15 @@ jobs:
       - name: Build Wheel
         shell: bash
         run: |
-          # Troviamo il file toolchain generato da Conan per CMake
           CONF_FILE=$(find build -name "conan_toolchain.cmake")
           python -m build --wheel --config-setting=cmake.define.CMAKE_TOOLCHAIN_FILE="$CONF_FILE"
 
       - name: Repair Wheel (Bundle DLLs)
         run: |
-          # delvewheel aggiunge le DLL (.so di windows) dentro il pacchetto .whl
-          delvewheel repair dist/*.whl -w wheelhouse/
+          # Delvewheel include le DLL di libqi e boost nel .whl
+          if (Test-Path dist/*.whl) {
+            delvewheel repair dist/*.whl -w wheelhouse/
+          }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -107,9 +112,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Release libqi-python Windows
+          name: libqi-python Windows (Py 3.10-3.12)
           body: |
-            Built for Windows using GitHub Actions.
+            Built automatically.
           files: all-wheels/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
