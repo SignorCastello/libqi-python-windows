@@ -50,24 +50,28 @@ jobs:
         shell: bash
         run: |
           git clone --depth=1 https://github.com/aldebaran/libqi.git ../libqi
-          # Patch aggressiva per rimuovere il controllo gnu17 che blocca MSVC
-          python -c "import os, re; path='../libqi/conanfile.py'; content=open(path).read(); content=content.replace('gnu17', '17'); content=re.sub(r'def validate\(self\):.*?def', 'def validate(self):\n        pass\n\n    def', content, flags=re.DOTALL); open(path,'w').write(content)"
+          python -c '''
+          import os, re
+          path = "../libqi/conanfile.py"
+          content = open(path).read()
+          
+          # Patch 1: Standard C++
+          content = content.replace("gnu17", "17")
+          
+          # Patch 2: Validation bypass
+          content = re.sub(r"def validate\(self\):.*?def", "def validate(self):\n        pass\n\n    def", content, flags=re.DOTALL)
+          
+          # Patch 3: Forza QI_STATIC_BUILD nel dizionario
+          content = content.replace("variables={", "variables={\n                \"QI_STATIC_BUILD\": \"ON\",")
+          
+          open(path, "w").write(content)
+          '''
+          
           conan export ../libqi --version 4.0.5
-
+          
       - name: Install Dependencies with Conan
         shell: pwsh
         run: |
-          python -c '''
-            import os, re
-            path = "../libqi/conanfile.py"
-            with open(path, "r") as f:
-                content = f.read()
-            content = content.replace("gnu17", "17")
-            content = re.sub(r"def validate\(self\):.*?def", "def validate(self):\n        pass\n\n    def", content, flags=re.DOTALL)
-            content = content.replace("variables={", "variables={\n                \"QI_STATIC_BUILD\": \"ON\",") 
-            with open(path, "w") as f:
-                f.write(content)
-            '''
           conan install . --build=missing `
             -s build_type=Release `
             -s compiler.cppstd=17 `
