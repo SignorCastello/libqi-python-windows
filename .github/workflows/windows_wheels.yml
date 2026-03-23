@@ -72,8 +72,9 @@ jobs:
             -s build_type=Release `
             -s compiler.cppstd=17 `
             -o *:shared=False `
+            -c tools.build:cxxflags="['/DQI_STATIC_BUILD']" `
+            -c tools.build:cflags="['/DQI_STATIC_BUILD']" `
             -c tools.build:skip_test=true
-
       - name: Build Wheel
         shell: bash
         run: |
