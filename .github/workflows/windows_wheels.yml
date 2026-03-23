@@ -2,8 +2,8 @@ name: Build and Release Windows Wheels
 
 on:
   schedule:
-    - cron: '0 0 */14 * *' # Esegue ogni 14 giorni
-  workflow_dispatch:      # Permette l'avvio manuale
+    - cron: '0 0 */14 * *' 
+  workflow_dispatch:      
 
 jobs:
   sync:
@@ -29,7 +29,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Ultime tre versioni di Python
         python-version: ['3.10', '3.11', '3.12']
 
     steps:
@@ -58,8 +57,17 @@ jobs:
       - name: Install Dependencies with Conan
         shell: pwsh
         run: |
-          # Forziamo lo standard 17 e la build STATICA (-o *:shared=False)
-          # Questo risolve gli errori C4273 di 'inconsistent dll linkage'
+          python -c '''
+            import os, re
+            path = "../libqi/conanfile.py"
+            with open(path, "r") as f:
+                content = f.read()
+            content = content.replace("gnu17", "17")
+            content = re.sub(r"def validate\(self\):.*?def", "def validate(self):\n        pass\n\n    def", content, flags=re.DOTALL)
+            content = content.replace("variables={", "variables={\n                \"QI_STATIC_BUILD\": \"ON\",") 
+            with open(path, "w") as f:
+                f.write(content)
+            '''
           conan install . --build=missing `
             -s build_type=Release `
             -s compiler.cppstd=17 `
@@ -70,7 +78,6 @@ jobs:
         shell: bash
         run: |
           CONF_FILE=$(find build -name "conan_toolchain.cmake")
-          # Passiamo i flag a CMake per forzare la modalità statica e disabilitare i test
           python -m build --wheel `
             --config-setting=cmake.define.CMAKE_TOOLCHAIN_FILE="$CONF_FILE" `
             --config-setting=cmake.define.QI_WITH_TESTS=OFF `
@@ -79,7 +86,6 @@ jobs:
       - name: Repair Wheel (Bundle DLLs)
         shell: pwsh
         run: |
-          # Delvewheel cercherà eventuali dipendenze rimaste (es. OpenSSL) e le includerà
           if (Test-Path dist/*.whl) {
             delvewheel repair dist/*.whl -w wheelhouse/
           }
